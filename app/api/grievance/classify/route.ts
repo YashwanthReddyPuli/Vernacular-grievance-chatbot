@@ -2,23 +2,45 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { classifyGrievance } from '@/lib/classifier';
 
+/**
+ * Sanitizes user input string by stripping HTML tags and control characters
+ */
+function sanitizeInput(str: string): string {
+  return str.replace(/<[^>]*>?/gm, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim();
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const { raw_text, citizen_contact, location_hint } = body;
 
+    // 1. Input Validation: reject empty / non-string
     if (!raw_text || typeof raw_text !== 'string' || !raw_text.trim()) {
       return NextResponse.json(
-        { success: false, error: 'raw_text is required' },
+        { success: false, error: 'Please provide valid, non-empty grievance text.' },
         { status: 400 }
       );
     }
 
-    const cleanRawText = raw_text.trim();
-    const cleanContact = citizen_contact ? String(citizen_contact).trim() : null;
-    const cleanLocation = location_hint ? String(location_hint).trim() : null;
+    const sanitizedRawText = sanitizeInput(raw_text);
 
-    // 1. Insert row into grievances table
+    if (sanitizedRawText.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Grievance text contains invalid characters.' },
+        { status: 400 }
+      );
+    }
+
+    // Cap max length at 3000 characters
+    const cleanRawText = sanitizedRawText.substring(0, 3000);
+    const cleanContact = citizen_contact && typeof citizen_contact === 'string'
+      ? sanitizeInput(citizen_contact).substring(0, 200)
+      : null;
+    const cleanLocation = location_hint && typeof location_hint === 'string'
+      ? sanitizeInput(location_hint).substring(0, 300)
+      : null;
+
+    // 2. Insert record into grievances table
     let grievanceId: string | null = null;
     try {
       const { data: grievanceRecord, error: grievanceErr } = await supabase
@@ -36,13 +58,13 @@ export async function POST(req: NextRequest) {
         grievanceId = grievanceRecord.id;
       }
     } catch (dbErr) {
-      console.warn('Supabase DB insertion for grievance skipped or failed:', dbErr);
+      console.warn('Supabase DB grievance insert skipped or failed:', dbErr);
     }
 
-    // 2. Run the Classification Engine (Stage 1 + Stage 2)
+    // 3. Run the Classification Engine
     const classificationResult = await classifyGrievance(cleanRawText, cleanLocation || undefined);
 
-    // 3. Resolve category_id from categories table
+    // 4. Resolve category_id from categories table
     let categoryId: string | null = null;
     try {
       const { data: catRecord } = await supabase
@@ -58,7 +80,7 @@ export async function POST(req: NextRequest) {
       console.warn('Category ID lookup skipped:', catErr);
     }
 
-    // 4. Insert draft ticket into tickets table
+    // 5. Insert draft ticket into tickets table
     let ticketId: string | null = null;
     if (grievanceId) {
       try {
@@ -81,11 +103,11 @@ export async function POST(req: NextRequest) {
           ticketId = ticketRecord.id;
         }
       } catch (tErr) {
-        console.warn('Supabase DB insertion for ticket skipped or failed:', tErr);
+        console.warn('Supabase DB ticket insert skipped or failed:', tErr);
       }
     }
 
-    // 5. Return standardized payload
+    // 6. Return response payload
     return NextResponse.json({
       success: true,
       message: 'Grievance classified successfully',

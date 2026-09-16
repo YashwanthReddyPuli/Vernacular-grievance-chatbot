@@ -21,27 +21,27 @@ export default function Home() {
     structuredTicket: StructuredTicketDraft;
   } | null>(null);
 
-  // Preset Sample Grievances for Quick Testing
+  // Edge Case Presets for Live Hackathon Testing
   const samplePresets = [
     {
-      label: '🇮🇳 Hindi (Water Supply)',
-      text: 'हमारे मोहल्ले में 3 दिन से पानी नहीं आ रहा है, पीने का पानी खत्म हो गया है और गंदा पानी बह रहा है।',
-      location: 'Ward 12, Indiranagar, Bhopal',
+      label: '🇮🇳 Code-Switched (Hinglish / Teluglish)',
+      text: 'Ward 5 me high voltage current cutoff hua hai, electrical transformer is sparking badly since morning.',
+      location: 'Ward 5, Bhopal',
     },
     {
-      label: '🇮🇳 Telugu (Electricity Outage)',
-      text: 'మా ఏరియాలో నిన్నటి నుండి కరెంట్ లేదు, ట్రాన్స్‌ఫార్మర్ లో కరెంట్ షార్ట్ సర్క్యూట్ అయింది.',
-      location: 'Miyapur, Hyderabad',
+      label: '⚡ Very Short (2-3 Words)',
+      text: 'Water leakage pipe',
+      location: 'Sector 4, Rohini',
     },
     {
-      label: '🇬🇧 English (Sanitation / Waste)',
-      text: 'Garbage and plastic waste is overflowing in the street dustbin, creating foul smell and mosquitoes.',
-      location: 'Sector 15, Gurgaon',
+      label: '📜 Long Rambling Complaint',
+      text: 'I am writing to inform you that yesterday when I went out to buy groceries near the main market road, I noticed that the street light was broken and there was also garbage dumped near the corner next to the drain, but the main issue is that a huge truck hit the transformer and electricity is cut off for 50 houses.',
+      location: 'Civil Lines, Nagpur',
     },
     {
-      label: '🇮🇳 Mixed (Roads / Potholes)',
-      text: 'Main road contains huge potholes, sadak toot gayi hai and roadu padaindi.',
-      location: 'MG Road, Mysuru',
+      label: '⚖️ Multi-Category Tie Candidate',
+      text: 'Dirty sewage water is leaking onto the main road created huge potholes and street light is off.',
+      location: 'Station Road, Mysuru',
     },
   ];
 
@@ -129,7 +129,7 @@ export default function Home() {
             {/* Quick Test Presets */}
             <div>
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                Quick Test Samples (Click to load):
+                Edge Case Test Presets (Click to load):
               </span>
               <div className="flex flex-wrap gap-2">
                 {samplePresets.map((preset, idx) => (
@@ -158,13 +158,14 @@ export default function Home() {
                   id="grievance"
                   rows={5}
                   value={rawText}
+                  maxLength={3000}
                   onChange={(e) => setRawText(e.target.value)}
-                  placeholder="यहाँ अपनी समस्या लिखें... (Enter grievance in Hindi, Telugu, English, etc.)"
+                  placeholder="यहाँ अपनी समस्या लिखें... (Enter grievance in Hindi, Telugu, English, or code-switched vernacular dialect)"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base resize-none"
                 />
                 <p className="mt-1.5 text-xs text-slate-500 flex justify-between">
-                  <span>Supports 12+ official regional languages and mixed dialects.</span>
-                  <span>{rawText.length} characters</span>
+                  <span>Supports code-switching, short phrases, and regional terms.</span>
+                  <span>{rawText.length} / 3000</span>
                 </p>
               </div>
 

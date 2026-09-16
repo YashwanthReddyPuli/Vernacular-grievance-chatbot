@@ -15,6 +15,7 @@ export interface ClassificationMetadata {
   matched_keywords: string[];
   candidates: CategoryCandidateScore[];
   reasoning?: string;
+  low_confidence?: boolean;
 }
 
 export interface StructuredTicketDraft {
@@ -30,14 +31,14 @@ export interface ClassificationResponse {
 }
 
 /**
- * Tokenizes and normalizes text for matching
+ * Normalizes text for matching
  */
 function normalizeText(text: string): string {
   return text.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
- * STAGE 1: Deterministic Rule-Based Classification
+ * STAGE 1: Deterministic Rule-Based Classification with Edge Case Handling
  */
 export function classifyRuleBased(rawText: string): {
   topCategory: string;
@@ -46,8 +47,12 @@ export function classifyRuleBased(rawText: string): {
   matchedKeywords: string[];
   candidates: CategoryCandidateScore[];
   isAmbiguous: boolean;
+  isShortInput: boolean;
 } {
   const normalized = normalizeText(rawText);
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const isShortInput = words.length <= 4;
+
   const candidates: CategoryCandidateScore[] = [];
 
   for (const [catName, def] of Object.entries(CATEGORY_DEFINITIONS)) {
@@ -57,8 +62,11 @@ export function classifyRuleBased(rawText: string): {
     for (const kw of def.keywords) {
       const normalizedKw = normalizeText(kw);
       if (normalizedKw && normalized.includes(normalizedKw)) {
-        matched.push(kw);
-        matchCount++;
+        // Prevent duplicate keyword matches
+        if (!matched.includes(kw)) {
+          matched.push(kw);
+          matchCount++;
+        }
       }
     }
 
@@ -75,30 +83,35 @@ export function classifyRuleBased(rawText: string): {
 
   const top = candidates[0];
   const second = candidates[1];
-
   const totalMatches = candidates.reduce((acc, c) => acc + c.score, 0);
 
-  // Confidence calculation
+  // Scaled confidence calculation
   let confidence = 0;
-  if (totalMatches > 0) {
-    confidence = Math.min(1.0, Number((top.score / Math.max(1, totalMatches * 0.7)).toFixed(2)));
+  if (totalMatches > 0 && top.score > 0) {
+    if (isShortInput && top.score <= 1) {
+      // Short 2-3 word inputs get a capped lower confidence score
+      confidence = 0.35;
+    } else {
+      confidence = Math.min(1.0, Number((top.score / Math.max(1, totalMatches * 0.75)).toFixed(2)));
+    }
   }
 
-  // Ambiguity check: no keywords matched OR top two scores are within 1 match / closeness threshold
+  // Ambiguity condition: 0 matches OR top 2 scores within 1 match distance
   const isAmbiguous = top.score === 0 || (second && top.score > 0 && top.score - second.score <= 1);
 
   return {
-    topCategory: top ? top.category : 'Water Supply',
-    topDepartment: top ? top.department : CATEGORY_DEFINITIONS['Water Supply'].department,
+    topCategory: top && top.score > 0 ? top.category : 'Water Supply',
+    topDepartment: top && top.score > 0 ? top.department : CATEGORY_DEFINITIONS['Water Supply'].department,
     confidence: confidence,
     matchedKeywords: top ? top.matched_keywords : [],
     candidates: candidates,
     isAmbiguous: isAmbiguous,
+    isShortInput: isShortInput,
   };
 }
 
 /**
- * Stage 2 Helper: Call LLM API (Anthropic / Gemini / OpenAI or Fetch)
+ * Stage 2 Helper: Call LLM API with fallback
  */
 async function callLLMStage2(
   rawText: string,
@@ -112,18 +125,16 @@ async function callLLMStage2(
 } | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
 
-  if (!apiKey) {
-    return null;
-  }
+  if (!apiKey) return null;
 
-  const prompt = `You are an expert civic grievance classifier for Indian Municipal and Regional Departments.
-Analyze the following citizen complaint (written in Hindi, Telugu, English, or mixed vernacular dialect).
+  const prompt = `You are an expert civic grievance classifier for Indian Municipal & State Departments.
+Analyze this citizen complaint (written in English, Hindi, Telugu, code-switched dialect, or rambling text).
 
 Complaint Text: "${rawText}"
-Location Hint Provided: "${locationHint || 'None'}"
+Location Hint: "${locationHint || 'None'}"
 
-Top Matched Categories from Rule-based analysis:
-${candidates ? candidates.slice(0, 3).map((c) => `- ${c.category} (${c.department}): ${c.score} keywords`).join('\n') : 'None'}
+Candidates from Keyword Analysis:
+${candidates ? candidates.slice(0, 3).map((c) => `- ${c.category} (${c.department}): ${c.score} matches`).join('\n') : 'None'}
 
 Valid Departments:
 1. Water Supply (Municipal Water Board)
@@ -133,19 +144,18 @@ Valid Departments:
 5. Police (Police Department)
 6. Revenue/Land Records (Revenue Department)
 
-Respond STRICTLY with a raw valid JSON object (no markdown, no backticks):
+Respond STRICTLY with raw JSON (no markdown formatting):
 {
-  "category": "<Exact name from the 6 valid departments above>",
+  "category": "<Exact category name from valid list>",
   "department": "<Exact department name>",
-  "reasoning": "<Short explanation of why this category was selected>",
-  "issue_summary": "<Concise English summary of the main complaint>",
-  "location": "<Extracted or inferred location/address>",
+  "reasoning": "<Short explanation resolving the core issue>",
+  "issue_summary": "<Concise 1-sentence English summary isolating the core issue>",
+  "location": "<Extracted or inferred location>",
   "urgency": "<low|medium|high|urgent>",
-  "requested_action": "<Clear action required by department>"
+  "requested_action": "<Clear action required>"
 }`;
 
   try {
-    // Anthropic API Call
     if (process.env.ANTHROPIC_API_KEY) {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -163,22 +173,21 @@ Respond STRICTLY with a raw valid JSON object (no markdown, no backticks):
 
       if (!res.ok) return null;
       const data = await res.json();
-      const content = data.content?.[0]?.text || '';
-      const parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      const text = data.content?.[0]?.text || '';
+      const parsed = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
       return {
         category: parsed.category,
         department: CATEGORY_DEFINITIONS[parsed.category]?.department || parsed.department,
         reasoning: parsed.reasoning,
         structured_ticket: {
-          issue_summary: parsed.issue_summary || rawText,
+          issue_summary: parsed.issue_summary || rawText.substring(0, 100),
           location: parsed.location || locationHint || 'Not specified',
           urgency: parsed.urgency || 'medium',
-          requested_action: parsed.requested_action || 'Inspect and resolve issue',
+          requested_action: parsed.requested_action || 'Address grievance',
         },
       };
     }
 
-    // Gemini API Call
     if (process.env.GEMINI_API_KEY) {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -200,15 +209,15 @@ Respond STRICTLY with a raw valid JSON object (no markdown, no backticks):
         department: CATEGORY_DEFINITIONS[parsed.category]?.department || parsed.department,
         reasoning: parsed.reasoning,
         structured_ticket: {
-          issue_summary: parsed.issue_summary || rawText,
+          issue_summary: parsed.issue_summary || rawText.substring(0, 100),
           location: parsed.location || locationHint || 'Not specified',
           urgency: parsed.urgency || 'medium',
-          requested_action: parsed.requested_action || 'Inspect and resolve issue',
+          requested_action: parsed.requested_action || 'Address grievance',
         },
       };
     }
   } catch (err) {
-    console.warn('LLM Stage 2 execution failed, falling back to rule-based classification:', err);
+    console.warn('LLM Stage 2 execution failed, using rule-based fallback:', err);
     return null;
   }
 
@@ -216,24 +225,28 @@ Respond STRICTLY with a raw valid JSON object (no markdown, no backticks):
 }
 
 /**
- * Core Two-Stage Classification Function
+ * Core Two-Stage Classification Function with Hardened Edge-Case Support
  */
 export async function classifyGrievance(
   rawText: string,
   locationHint?: string
 ): Promise<ClassificationResponse> {
-  // STAGE 1: Deterministic Rule-Based Classification
   const stage1 = classifyRuleBased(rawText);
 
-  // Fallback structured ticket extraction for rule-based mode
+  // Clean, concise summary extraction for long/rambling inputs
+  const cleanSummary =
+    rawText.length > 140
+      ? `${rawText.substring(0, 137).trim()}...`
+      : rawText.trim();
+
   const fallbackTicket: StructuredTicketDraft = {
-    issue_summary: rawText.length > 120 ? `${rawText.substring(0, 117)}...` : rawText,
-    location: locationHint && locationHint.trim() ? locationHint : 'Not specified',
-    urgency: stage1.confidence > 0.6 ? 'high' : 'medium',
+    issue_summary: cleanSummary,
+    location: locationHint && locationHint.trim() ? locationHint.trim() : 'Not specified',
+    urgency: stage1.confidence >= 0.6 ? 'high' : 'medium',
     requested_action: `Inspect and address issue in ${stage1.topCategory} department`,
   };
 
-  // If Stage 1 is decisive (not ambiguous), return Stage 1 result immediately
+  // If Stage 1 is non-ambiguous & has high confidence, return Stage 1 immediately
   if (!stage1.isAmbiguous && stage1.confidence >= 0.5) {
     return {
       classification: {
@@ -243,13 +256,14 @@ export async function classifyGrievance(
         confidence: stage1.confidence,
         matched_keywords: stage1.matchedKeywords,
         candidates: stage1.candidates,
-        reasoning: `Rule-based match: matched keyword(s) [${stage1.matchedKeywords.join(', ')}] for ${stage1.topCategory}.`,
+        reasoning: `Rule-based match: identified keyword(s) [${stage1.matchedKeywords.join(', ')}] for ${stage1.topCategory}.`,
+        low_confidence: false,
       },
       structured_ticket: fallbackTicket,
     };
   }
 
-  // STAGE 2: LLM-Assisted Tiebreak / Low Confidence Resolution
+  // STAGE 2: LLM Tiebreak for ambiguous or low keyword count
   const llmResult = await callLLMStage2(rawText, locationHint, stage1.candidates);
 
   if (llmResult) {
@@ -258,27 +272,32 @@ export async function classifyGrievance(
         category: llmResult.category,
         department: llmResult.department,
         method: 'ai_assisted_tiebreak',
-        confidence: 0.9,
+        confidence: 0.88,
         matched_keywords: stage1.matchedKeywords,
         candidates: stage1.candidates,
         reasoning: llmResult.reasoning,
+        low_confidence: false,
       },
       structured_ticket: llmResult.structured_ticket,
     };
   }
 
-  // Fallback if LLM API is unavailable or failed
+  // Fallback mode when Stage 2 API is unavailable or failed
+  const finalConfidence = stage1.confidence;
+  const isLowConfidence = finalConfidence < 0.35 || stage1.matchedKeywords.length === 0;
+
   return {
     classification: {
       category: stage1.topCategory,
       department: stage1.topDepartment,
       method: stage1.isAmbiguous ? 'rule_based_fallback' : 'rule_based',
-      confidence: stage1.confidence,
+      confidence: finalConfidence,
       matched_keywords: stage1.matchedKeywords,
       candidates: stage1.candidates,
-      reasoning: stage1.isAmbiguous
-        ? `Ambiguous keyword scores (${stage1.candidates.slice(0, 2).map((c) => `${c.category}:${c.score}`).join(', ')}). Rule-based top match selected as fallback.`
+      reasoning: isLowConfidence
+        ? `Low keyword score (${stage1.candidates.slice(0, 2).map((c) => `${c.category}:${c.score}`).join(', ')}). Manual department selection recommended.`
         : `Rule-based match selected with matched keywords: [${stage1.matchedKeywords.join(', ')}].`,
+      low_confidence: isLowConfidence,
     },
     structured_ticket: fallbackTicket,
   };

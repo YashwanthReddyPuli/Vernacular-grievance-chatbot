@@ -12,6 +12,15 @@ interface ConfirmationCardProps {
   onReset: () => void;
 }
 
+const CATEGORY_OPTIONS = [
+  { name: 'Water Supply', dept: 'Municipal Water Board' },
+  { name: 'Electricity', dept: 'Electricity Board' },
+  { name: 'Sanitation', dept: 'Sanitation Department' },
+  { name: 'Roads/PWD', dept: 'Public Works Department' },
+  { name: 'Police', dept: 'Police Department' },
+  { name: 'Revenue/Land Records', dept: 'Revenue Department' },
+];
+
 export default function ConfirmationCard({
   grievanceId,
   ticketId,
@@ -25,6 +34,11 @@ export default function ConfirmationCard({
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Manual Category Picker State
+  const [selectedCategory, setSelectedCategory] = useState(classification.category);
+  const selectedDept =
+    CATEGORY_OPTIONS.find((c) => c.name === selectedCategory)?.dept || classification.department;
+
   // Editable Form Fields
   const [summary, setSummary] = useState(structuredTicket.issue_summary);
   const [location, setLocation] = useState(structuredTicket.location);
@@ -33,8 +47,12 @@ export default function ConfirmationCard({
   );
   const [requestedAction, setRequestedAction] = useState(structuredTicket.requested_action);
 
-  // Check if citizen edited any fields
+  const isLowConfidence =
+    classification.low_confidence || classification.confidence < 0.35 || classification.matched_keywords.length === 0;
+
+  // Check if citizen edited any fields or category
   const isEdited =
+    selectedCategory !== classification.category ||
     summary !== structuredTicket.issue_summary ||
     location !== structuredTicket.location ||
     urgency !== structuredTicket.urgency ||
@@ -53,6 +71,8 @@ export default function ConfirmationCard({
           ticket_id: ticketId,
           citizen_action: action,
           edited_fields: action === 'edited' ? {
+            category: selectedCategory,
+            department: selectedDept,
             issue_summary: summary,
             location: location,
             urgency: urgency,
@@ -87,8 +107,8 @@ export default function ConfirmationCard({
           </span>
           <h3 className="text-2xl font-bold text-white mt-3">Grievance Submitted Successfully</h3>
           <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">
-            Your grievance has been classified and forwarded to the{' '}
-            <strong className="text-slate-200">{classification.department}</strong>.
+            Your grievance has been assigned to the{' '}
+            <strong className="text-slate-200">{selectedDept}</strong>.
           </p>
         </div>
 
@@ -98,8 +118,8 @@ export default function ConfirmationCard({
             <span className="font-mono text-indigo-400 font-bold">{ticketId}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-500">Department:</span>
-            <span className="text-slate-200 font-semibold">{classification.department}</span>
+            <span className="text-slate-500">Assigned Department:</span>
+            <span className="text-slate-200 font-semibold">{selectedDept} ({selectedCategory})</span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">Priority Level:</span>
@@ -126,7 +146,7 @@ export default function ConfirmationCard({
         <div>
           <div className="flex items-center space-x-2">
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-              AI Auto-Drafted Ticket
+              Auto-Drafted Ticket
             </span>
             <span className="text-xs text-slate-400 font-mono">ID: {ticketId.substring(0, 8)}...</span>
           </div>
@@ -136,12 +156,40 @@ export default function ConfirmationCard({
         <div className="flex items-center space-x-2">
           <span className="text-xs text-slate-400">Department:</span>
           <span className="px-3 py-1 rounded-lg bg-indigo-600/20 text-indigo-300 font-semibold text-xs border border-indigo-500/30">
-            {classification.department}
+            {selectedDept}
           </span>
         </div>
       </div>
 
-      {/* Raw Complaint Summary */}
+      {/* Low Confidence / Ambiguity Warning Alert Banner */}
+      {isLowConfidence && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-2">
+          <div className="flex items-center space-x-2 text-amber-400 font-semibold text-xs">
+            <span>⚠️ System Uncertainty Detected (Confidence: {(classification.confidence * 100).toFixed(0)}%)</span>
+          </div>
+          <p className="text-xs text-slate-300">
+            Our automated classifier detected low keyword certainty for this complaint. Please verify or manually select the correct department below.
+          </p>
+          <div className="pt-1">
+            <label className="block text-xs font-semibold text-amber-300 mb-1">
+              Select Department Manually:
+            </label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full bg-slate-950 border border-amber-500/40 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              {CATEGORY_OPTIONS.map((cat) => (
+                <option key={cat.name} value={cat.name}>
+                  {cat.name} ({cat.dept})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Raw Complaint Text */}
       <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
         <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider block mb-1">
           Original Citizen Complaint Input
@@ -149,11 +197,31 @@ export default function ConfirmationCard({
         <p className="text-sm text-slate-300 italic">"{rawText}"</p>
       </div>
 
-      {/* Editable Structured Ticket Fields */}
-      <div className="space-y-4 pt-2">
-        <h4 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-xs">
+      {/* Editable Fields */}
+      <div className="space-y-4 pt-1">
+        <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
           Draft Ticket Fields (Editable)
         </h4>
+
+        {/* Category Override if not low confidence */}
+        {!isLowConfidence && (
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1">
+              Assigned Category / Department
+            </label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              {CATEGORY_OPTIONS.map((cat) => (
+                <option key={cat.name} value={cat.name}>
+                  {cat.name} ({cat.dept})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Issue Summary */}
         <div>
@@ -243,7 +311,7 @@ export default function ConfirmationCard({
 
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Confidence Score:</span>
-              <span className="font-bold text-emerald-400">
+              <span className={`font-bold ${isLowConfidence ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {(classification.confidence * 100).toFixed(0)}%
               </span>
             </div>
@@ -266,7 +334,7 @@ export default function ConfirmationCard({
 
             {classification.candidates && classification.candidates.length > 0 && (
               <div>
-                <span className="text-slate-400 block mb-1">Top Department Candidates:</span>
+                <span className="text-slate-400 block mb-1">Top Candidate Department Scores:</span>
                 <div className="space-y-1">
                   {classification.candidates.slice(0, 3).map((c, i) => (
                     <div
