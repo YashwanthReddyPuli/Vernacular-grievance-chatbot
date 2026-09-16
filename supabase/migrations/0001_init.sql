@@ -46,3 +46,22 @@ CREATE TABLE IF NOT EXISTS confirmations (
     edited_fields JSONB,
     confirmed_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Enable RLS and add public policies for hackathon prototyping
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE grievances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE confirmations ENABLE ROW LEVEL SECURITY;
+
+-- Allow public read & write access during prototyping
+DROP POLICY IF EXISTS "Allow public read access on categories" ON categories;
+CREATE POLICY "Allow public read access on categories" ON categories FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Allow public all access on grievances" ON grievances;
+CREATE POLICY "Allow public all access on grievances" ON grievances FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public all access on tickets" ON tickets;
+CREATE POLICY "Allow public all access on tickets" ON tickets FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public all access on confirmations" ON confirmations;
+CREATE POLICY "Allow public all access on confirmations" ON confirmations FOR ALL USING (true) WITH CHECK (true);
